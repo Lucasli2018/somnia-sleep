@@ -16,6 +16,17 @@
 
   const DEFAULT_MIX = [64, 38, 22, 47];
 
+  // 混音声道顺序与 .track-card / .track-range 的 DOM 顺序一致
+  const MIX_CHANNELS = ['rain', 'ocean', 'forest', 'fire'];
+
+  // 各呼吸练习对应的环境音预设（0~1）
+  const SESSION_PRESETS = {
+    deep:   { rain: 0,    ocean: 0.55, forest: 0.15, fire: 0 },
+    rain:   { rain: 0.75, ocean: 0.15, forest: 0,    fire: 0 },
+    aurora: { rain: 0.1,  ocean: 0.3,  forest: 0.35, fire: 0 },
+    forest: { rain: 0.1,  ocean: 0.1,  forest: 0.6,  fire: 0 }
+  };
+
   const sessions = {
     deep: {
       title: '深海呼吸',
@@ -110,6 +121,7 @@
   let returnView = 'home';
 
   function showView(name) {
+    const leaving = currentView;
     currentView = name;
     app.dataset.view = name;
     views.forEach(function (view) {
@@ -121,6 +133,34 @@
     if (name !== 'player' && player.playing) {
       setPlaying(false);
     }
+    // 离开播放器时复位静音状态，避免影响混音页
+    if (leaving === 'player' && name !== 'player') {
+      player.muted = false;
+      if (el.volumeBtn) {
+        el.volumeBtn.classList.remove('on');
+        el.volumeBtn.setAttribute('aria-pressed', 'false');
+      }
+      if (window.SomniaAudio) SomniaAudio.setMuted(false);
+    }
+    routeAudio(name);
+  }
+
+  function routeAudio(name) {
+    if (!window.SomniaAudio) return;
+    if (name === 'mix') {
+      syncMixAudio();
+    } else if (name === 'home' || name === 'report') {
+      SomniaAudio.silence();
+    }
+    // player 视图的声音由 openSession 中的 applyPreset 负责
+  }
+
+  function syncMixAudio() {
+    if (!window.SomniaAudio) return;
+    SomniaAudio.ensure();
+    ranges.forEach(function (range, index) {
+      SomniaAudio.setChannel(MIX_CHANNELS[index], Number(range.value) / 100);
+    });
   }
 
   tabs.forEach(function (tab) {
@@ -251,6 +291,7 @@
 
   function setPlaying(next) {
     player.playing = next;
+    if (next && window.SomniaAudio) SomniaAudio.ensure();
     window.cancelAnimationFrame(player.raf);
     player.last = 0;
 
@@ -298,6 +339,10 @@
     showView('player');
     syncBreath();
     renderPlayer();
+    if (window.SomniaAudio) {
+      SomniaAudio.ensure();
+      SomniaAudio.applyPreset(SESSION_PRESETS[player.id] || SESSION_PRESETS.deep);
+    }
     setPlaying(true);
   }
 
@@ -346,6 +391,7 @@
       player.muted = !player.muted;
       el.volumeBtn.classList.toggle('on', player.muted);
       el.volumeBtn.setAttribute('aria-pressed', String(player.muted));
+      if (window.SomniaAudio) SomniaAudio.setMuted(player.muted);
       toast(player.muted ? '环境音已静音' : '环境音已恢复');
     });
   }
@@ -490,9 +536,11 @@
       updateRange(range, false);
       const card = range.closest('.track-card');
       if (card) setCardActive(card);
+      syncMixAudio();
     });
     range.addEventListener('change', function () {
       updateRange(range, true);
+      syncMixAudio();
     });
   });
 
